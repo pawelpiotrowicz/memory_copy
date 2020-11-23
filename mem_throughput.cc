@@ -1,13 +1,14 @@
 #include <string.h>
 #include <assert.h>
 #include <immintrin.h>
-
+#include <iostream>
+#include<algorithm>
 #include <thread>
 #include <vector>
 #include <chrono>
 #include <ctime>
 #include <functional>
-
+#define log_info( x) std::cout << "[INFO]: " << x << std::endl;
 long mem_size = 1000L*1000*1000;
 // The number of memory copies in a thread.
 // It seems if we have more than one memory copies, the O3 optimization may do something
@@ -132,7 +133,7 @@ void rand_copy_mem(int thread_id, double &throughput, MemCpyFn memcpy1)
 	std::chrono::duration<double> rel_end = end - start0;
 }
 
-int main()
+int main(int argc, char **argv)
 {
 	printf("copy with %d threads\n", num_threads);
 	std::vector<std::thread *> threads(num_threads);
@@ -144,17 +145,47 @@ int main()
 	tests.push_back(test_copy("memcpy512", memcpy512));
 	tests.push_back(test_copy("memcpy256", memcpy256));
 
+    if(argc!=3)
+	{
+		log_info(" {0,1,2} 1-seq 2-random 3-both  [test]" );
+		for(auto test: tests)
+		{
+           log_info( test.name );
+		}
+		exit(1);
+	}
+
+    int type_test = 3;
+	type_test = atoi(argv[1]); 
+    if(!(type_test >=0 && type_test<=3 )) { log_info("error type_test"); exit(-1); }
+	std::string selected_tests = argv[2];	
+    log_info("type_test="<< type_test << " selected="<< selected_tests);
+    if(selected_tests != "-")
+	tests.erase(std::remove_if(tests.begin(), tests.end(), [selected_tests](test_copy& t){  return t.name!=selected_tests; }),
+               tests.end());
+
+	 if(!tests.size())
+	 {
+	 log_info("No tests selected !");
+	 exit(1);
+	 }
+    double throughput = 0;
 	for (auto &test : tests) {
+		if(type_test & 0x01) {
 		for (int i = 0; i < num_threads; i++) {
 			threads[i] = new std::thread(seq_copy_mem, std::ref(throughputs[i]), test.fn);
 		}
-		double throughput = 0;
+		throughput = 0;
 		for (int i = 0; i < num_threads; i++) {
 			threads[i]->join();
 			delete threads[i];
 			throughput += throughputs[i];
 		}
 		printf("sequential copy throughput of %s: %f GB/s\n", test.name.c_str(), throughput / 1024 / 1024 / 1024);
+
+		}
+
+         if(!(type_test & 0x02)) continue;
 
 		// Calculate the total number of strides in the memory.
 		size_t num_strides = mem_size / stride;
