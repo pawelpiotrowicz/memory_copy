@@ -8,6 +8,7 @@
 #include <chrono>
 #include <ctime>
 #include <functional>
+#include <boost/thread.hpp>
 #define log_info( x) std::cout << "[INFO]: " << x << std::endl;
 long mem_size = 1000L*1000*1000;
 // The number of memory copies in a thread.
@@ -15,7 +16,7 @@ long mem_size = 1000L*1000*1000;
 // to remove some of the copies.
 int num_copies = 10;
 // The number of threads should be the same as the number of physical cores.
-int num_threads = 16;
+int num_threads = 48;
 
 auto start0 = std::chrono::system_clock::now();
 typedef std::function<void(void*,void*,size_t)> MemCpyFn;
@@ -26,7 +27,7 @@ void memcpy_simd(void *dst, void *src, size_t size) {
 	assert(size % sizeof(long) == 0);
 	long *dst1 = (long *) dst;
 	long *src1 = (long *) src;
-#pragma simd
+#pragma vector nontemporal
 	for (size_t i = 0; i < size / sizeof(long); i++) {
 		dst1[i] = src1[i];
 	}
@@ -105,7 +106,7 @@ std::vector<long> offsets;
 int stride = 512;
 
 
-void rand_copy_mem(int thread_id, double &throughput, MemCpyFn memcpy1)
+void rand_copy_mem(int thread_id, double &throughput, MemCpyFn memcpy1, boost::barrier& prework_completed)
 {
 	long num_offsets = offsets.size() / num_threads;
 	long copy_size = num_offsets * stride;
@@ -115,6 +116,12 @@ void rand_copy_mem(int thread_id, double &throughput, MemCpyFn memcpy1)
 	memset(src, 0, mem_size);
 	memset(dst, 0, copy_size);
 
+	// warmup run
+        for (size_t i = 0; i < num_offsets; i++) {
+            memcpy1(dst + i * stride, src + offset_start[i] * stride, stride);
+        }
+
+	prework_completed.wait();
 	auto copy_start = std::chrono::system_clock::now();
 	std::chrono::duration<double> rel_start = copy_start - start0;
 	
@@ -203,8 +210,9 @@ int main(int argc, char **argv)
 				offset_start[rand_idx] = tmp;
 			}
 		}
+		boost::barrier prework_completed(num_threads);
 		for (int i = 0; i < num_threads; i++) {
-			threads[i] = new std::thread(rand_copy_mem, i, std::ref(throughputs[i]), test.fn);
+			threads[i] = new std::thread(rand_copy_mem, i, std::ref(throughputs[i]), test.fn, std::ref(prework_completed));
 		}
 		throughput = 0;
 		for (int i = 0; i < num_threads; i++) {
